@@ -1,234 +1,187 @@
-// TODO
-// - check mozilla best practices
-let width, height;
+const ATTRIB_POS = 1;
+const ATTRIB_COLOR = 2;
 
+const ATTRIB_POS_LOC = 0;
+const ATTRIB_COLOR_LOC = 1;
+
+let canvas;
+let gl;
 let camMatrix;
 
-window.onload = async function () {
-    const canvas = document.getElementById("glcanvas");
-    const gl = canvas.getContext("webgl");
+let testShader;
+let uProjectionMatrixLoc;
+let uModelViewMatrixLoc;
 
-    if (gl === null) {
-        alert("Unable to initialize WebGL. Your browser or machine may not support it.");
-        return;
-    }
+let shapeMesh;
 
-    window.onresize = function() {
-        const displayWidth  = canvas.clientWidth;
-        const displayHeight = canvas.clientHeight;
+const vertSrc = `#version 300 es
+layout (location=0) in vec2 aVertexPosition;
+layout (location=1) in vec2 aColor;
 
-        if (canvas.width === displayWidth && canvas.height === displayHeight) {
-            return;
-        }
-        canvas.width = displayWidth;
-        canvas.height = displayHeight;
-
-        width = gl.drawingBufferWidth;
-        height = gl.drawingBufferHeight
-        gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-
-        camMatrix = [
-            2/width, 0, 0, 0,
-            0, 2/height, 0, 0,
-            0, 0, -1, 0,
-            -1, -1, 0, 1,
-        ];
-        console.log(gl.drawingBufferWidth, gl.drawingBufferHeight);
-        
-    }
-    window.onresize(); // initial resize
-
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-
-    const vsSource = `
-attribute vec2 aVertexPosition;
 uniform mat4 uModelViewMatrix;
 uniform mat4 uProjectionMatrix;
 void main() {
     vec4 pos = vec4(aVertexPosition, 0, 1);
     gl_Position = uProjectionMatrix * uModelViewMatrix * pos;
-}
-`;
+}`;
 
-    const fsSource = `
+const fragSrc = `#version 300 es
+precision mediump float;
+out vec4 fragColor;
 void main() {
-    gl_FragColor = vec4(1.0, 0.2, 0.2, 1.0);
-}
-`;
+    fragColor = vec4(1.0, 0.2, 0.2, 1.0);
+}`;
 
-    const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+class Shader {
+    prog;
 
-    const programInfo = {
-        program: shaderProgram,
-        attribLocations: {
-            vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition"),
-        },
-        uniformLocations: {
-            projectionMatrix: gl.getUniformLocation(
-            shaderProgram,
-            "uProjectionMatrix"
-            ),
-            modelViewMatrix: gl.getUniformLocation(shaderProgram, "uModelViewMatrix"),
-        },
-    };
+    constructor(vertSrc, fragSrc) {
+        const vertShader = gl.createShader(gl.VERTEX_SHADER);
+        const fragShader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(vertShader, vertSrc);
+        gl.shaderSource(fragShader, fragSrc);
 
-    const buffers = initBuffers(gl);
+        this.prog = gl.createProgram();
+        gl.attachShader(this.prog, vertShader);
+        gl.attachShader(this.prog, fragShader);
 
-    drawScene(gl, programInfo, buffers);
-}
+        gl.compileShader(vertShader);
+        gl.compileShader(fragShader);
+        gl.linkProgram(this.prog);
 
-function initBuffers(gl) {
-    const positionBuffer = initPositionBuffer(gl);
-  
-    return {
-        position: positionBuffer,
-    };
-  }
-  
-function initPositionBuffer(gl) {
-    const positionBuffer = gl.createBuffer();
+        if (!gl.getProgramParameter(this.prog, gl.LINK_STATUS)) {
+            console.error(`Link failed: ${gl.getProgramInfoLog(this.prog)}`);
+            console.error(`vs info-log: ${gl.getShaderInfoLog(vertShader)}`);
+            console.error(`fs info-log: ${gl.getShaderInfoLog(fragShader)}`);
+            // TODO: delete shaders
+        }
+    }
+};
 
-    // Select the positionBuffer as the one to apply buffer
-    // operations to from here out.
-    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+class Mesh {
+    attribs;
+    color = [1.0, 0.8, 0.5];
+    data = [];
 
-    // Now create an array of positions for the square.
-    const positions = [
-        10, 10,
-        100, 10,
-        10, 100,
-        100, 100,
-    ];
+    constructor(attribs) {
+        this.attribs = attribs;
+    }
 
-    // Now pass the list of positions into WebGL to build the
-    // shape. We do this by creating a Float32Array from the
-    // JavaScript array, then use it to fill the current buffer.
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+    color(r, g, b) {
+        this.color[0] = r;
+        this.color[1] = g;
+        this.color[2] = b;
+    }
 
-    return positionBuffer;
-}
+    add(x, y) {
+        this.data.push(x, y);
+        if ((this.attribs & ATTRIB_COLOR) === ATTRIB_COLOR) {
+            this.data.concat(this.color);
+        }
+    }
+};
 
-//
-// Initialize a shader program, so WebGL knows how to draw our data
-//
-function initShaderProgram(gl, vsSource, fsSource) {
-  const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
-  const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
+class Model {
+    vao;
+    vbo;
 
-  // Create the shader program
+    constructor(mesh) {
+        this.vao = gl.createVertexArray();
+        gl.bindVertexArray(this.vao);
 
-  const shaderProgram = gl.createProgram();
-  gl.attachShader(shaderProgram, vertexShader);
-  gl.attachShader(shaderProgram, fragmentShader);
-  gl.linkProgram(shaderProgram);
+        this.vbo = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
 
-  // If creating the shader program failed, alert
+        console.log("new model: ", this.vao, this.vbo);
 
-  if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-    alert(
-      `Unable to initialize the shader program: ${gl.getProgramInfoLog(
-        shaderProgram
-      )}`
-    );
-    return null;
-  }
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.data), gl.STATIC_DRAW);
 
-  return shaderProgram;
-}
+        const floatBytes = Float32Array.BYTES_PER_ELEMENT;
+        let elementSize = 2;
+        let colorOffset = 2 * floatBytes;
+        if ((mesh.attribs & ATTRIB_COLOR) === ATTRIB_COLOR) {
+            elementSize += 3;
+            colorOffset = 3 * floatBytes;
+        }
+        let stride = elementSize * floatBytes;
 
-//
-// creates a shader of the given type, uploads the source and
-// compiles it.
-//
-function loadShader(gl, type, source) {
-  const shader = gl.createShader(type);
+        gl.vertexAttribPointer(ATTRIB_POS_LOC, 2, gl.FLOAT, false, stride, 0);
+        gl.enableVertexAttribArray(ATTRIB_POS_LOC);
 
-  // Send the source to the shader object
-
-  gl.shaderSource(shader, source);
-
-  // Compile the shader program
-
-  gl.compileShader(shader);
-
-  // See if it compiled successfully
-
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    alert(
-      `An error occurred compiling the shaders: ${gl.getShaderInfoLog(shader)}`
-    );
-    gl.deleteShader(shader);
-    return null;
-  }
-
-  return shader;
+        gl.vertexAttribPointer(ATTRIB_COLOR_LOC, 3, gl.FLOAT, false, stride, colorOffset);
+        gl.enableVertexAttribArray(ATTRIB_COLOR_LOC);
+    }
 }
 
+function init(targetCanvas) {
+    canvas = targetCanvas;
+    console.log("init", targetCanvas);
+    gl = canvas.getContext("webgl2");
+    if (gl === null) {
+        throw "could not get webgl2 context";
+    }
+    gl.disable(gl.DEPTH_TEST);
 
-function drawScene(gl, programInfo, buffers) {
+    testShader = new Shader(vertSrc, fragSrc);
+    uProjectionMatrixLoc = gl.getUniformLocation(testShader.prog, "uProjectionMatrix");
+    uModelViewMatrixLoc = gl.getUniformLocation(testShader.prog, "uModelViewMatrix");
+
+    shapeMesh = new Mesh(ATTRIB_POS)
+
+    updateCam();
+}
+
+function resize(width, height) {
+    if (canvas.width === width && canvas.height === height) {
+      return;
+    }
+    canvas.width = width;
+    canvas.height = height;
+
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+
+    updateCam();
+}
+
+function updateCam() {
+    camMatrix = [
+        2 / gl.drawingBufferWidth, 0, 0, 0,
+        0, 2 / gl.drawingBufferHeight, 0, 0,
+        0, 0, -1, 0,
+        -1, -1, 0, 1,
+      ];
+}
+
+function rect(width, height) {
+    shapeMesh.add(0, 0);
+    shapeMesh.add(width, 0);
+    shapeMesh.add(0, height);
+    shapeMesh.add(width, height);
+}
+
+function render() {
     gl.clearColor(0.0, 0.0, 0.0, 1.0); // Clear to black, fully opaque
-    gl.clearDepth(1.0); // Clear everything
-    gl.enable(gl.DEPTH_TEST); // Enable depth testing
-    gl.depthFunc(gl.LEQUAL); // Near things obscure far things
-  
-    // Clear the canvas before we start drawing on it.
-  
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  
-    // Create a perspective matrix, a special matrix that is
-    // used to simulate the distortion of perspective in a camera.
-    // Our field of view is 45 degrees, with a width/height
-    // ratio that matches the display size of the canvas
-    // and we only want to see objects between 0.1 units
-    // and 100 units away from the camera.
-    
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
     const identMatrix = [
         1, 0, 0, 0,
         0, 1, 0, 0,
         0, 0, 1, 0,
         0, 0, 0, 1,
     ];
-  
-    setPositionAttribute(gl, buffers, programInfo);
-  
-    gl.useProgram(programInfo.program);
-  
-    gl.uniformMatrix4fv(
-      programInfo.uniformLocations.projectionMatrix,
-      false,
-      camMatrix,
-    );
-    gl.uniformMatrix4fv(
-      programInfo.uniformLocations.modelViewMatrix,
-      false,
-      identMatrix,
-    );
-  
-    {
-      const offset = 0;
-      const vertexCount = 4;
-      gl.drawArrays(gl.TRIANGLE_STRIP, offset, vertexCount);
-    }
-  }
-  
-  // Tell WebGL how to pull out the positions from the position
-  // buffer into the vertexPosition attribute.
-  function setPositionAttribute(gl, buffers, programInfo) {
-    const numComponents = 2; // pull out 2 values per iteration
-    const type = gl.FLOAT; // the data in the buffer is 32bit floats
-    const normalize = false; // don't normalize
-    const stride = 0; // how many bytes to get from one set of values to the next
-    // 0 = use type and numComponents above
-    const offset = 0; // how many bytes inside the buffer to start from
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
-    gl.vertexAttribPointer(
-      programInfo.attribLocations.vertexPosition,
-      numComponents,
-      type,
-      normalize,
-      stride,
-      offset
-    );
-    gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
-  }
+
+    gl.useProgram(testShader.prog);
+
+    gl.uniformMatrix4fv(uProjectionMatrixLoc, false, camMatrix);
+    gl.uniformMatrix4fv(uModelViewMatrixLoc, false, identMatrix);
+
+    let shapeModel = new Model(shapeMesh);
+    DONT CREATE NEW VBO/VAO EVERY FRAME!
+    gl.bindVertexArray(shapeModel.vao);
+
+    const offset = 0;
+    const vertexCount = 4;
+    gl.drawArrays(gl.TRIANGLE_STRIP, offset, vertexCount);
+}
+
+export {Shader, init, resize, rect, render};
