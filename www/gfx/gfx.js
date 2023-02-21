@@ -6,7 +6,10 @@ const ATTRIB_COLOR_LOC = 1;
 
 let canvas;
 let gl;
+
+let transform;
 let camMatrix;
+let camX = 0, camY = 0;
 
 let testShader;
 let uProjectionMatrixLoc;
@@ -92,8 +95,6 @@ class Model {
         this.vbo = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
 
-        console.log("new model: ", this.vao, this.vbo);
-
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.data), gl.STATIC_DRAW);
 
         const floatBytes = Float32Array.BYTES_PER_ELEMENT;
@@ -113,6 +114,37 @@ class Model {
     }
 }
 
+class Vec {
+    x;
+    y;
+
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+class Transform {
+    mat = new Float32Array(9);
+
+    constructor() {
+        this.mat[0] = 1; this.mat[3] = 0; this.mat[6] = 0;
+        this.mat[1] = 0; this.mat[4] = 1; this.mat[7] = 0;
+        this.mat[2] = 0; this.mat[5] = 0; this.mat[8] = 1;
+    }
+
+    transformVec(v) {
+        v.x = v.x * this.mat[0] + this.mat[6];
+        v.y = v.y * this.mat[4] + this.mat[7];
+    }
+
+    static Translation(x, y) {
+        let t = new Transform();
+        t.mat[6] = x;
+        t.mat[7] = y;
+    }
+}
+
 function init(targetCanvas) {
     canvas = targetCanvas;
     console.log("init", targetCanvas);
@@ -126,8 +158,18 @@ function init(targetCanvas) {
     uProjectionMatrixLoc = gl.getUniformLocation(testShader.prog, "uProjectionMatrix");
     uModelViewMatrixLoc = gl.getUniformLocation(testShader.prog, "uModelViewMatrix");
 
-    shapeMesh = new Mesh(ATTRIB_POS)
+    shapeMesh = new Mesh(ATTRIB_POS);
 
+    transform = new Transform();
+
+    _resize(canvas.clientWidth, canvas.clientHeight); // initial resize
+}
+
+function _resize(width, height) {
+    canvas.width = width;
+    canvas.height = height;
+
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
     updateCam();
 }
 
@@ -135,21 +177,23 @@ function resize(width, height) {
     if (canvas.width === width && canvas.height === height) {
       return;
     }
-    canvas.width = width;
-    canvas.height = height;
-
-    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-
-    updateCam();
+    _resize(width, height);
 }
 
 function updateCam() {
+    const scaleX = 2 / gl.drawingBufferWidth;
+    const scaleY = 2 / gl.drawingBufferHeight;
+
     camMatrix = [
-        2 / gl.drawingBufferWidth, 0, 0, 0,
-        0, 2 / gl.drawingBufferHeight, 0, 0,
+        scaleX, 0, 0, 0,
+        0, scaleY, 0, 0,
         0, 0, -1, 0,
-        -1, -1, 0, 1,
+        -scaleX * camX, -scaleY * camY, 0, 1,
       ];
+}
+
+function pushTransform() {
+
 }
 
 function rect(width, height) {
@@ -157,6 +201,16 @@ function rect(width, height) {
     shapeMesh.add(width, 0);
     shapeMesh.add(0, height);
     shapeMesh.add(width, height);
+    shapeMesh.add(width, height); // end triangle strip
+}
+
+function circle(radius) {
+    const resolution = 36;
+    shapeMesh.add(0, 0);
+    for (let i = 0; i < resolution; i++) {
+        let rads = 2 * Math.PI / resolution;
+        shapeMesh.add(radius * Math.cos(rads * i), radius * Math.sin(rads * i));
+    }
 }
 
 function render() {
@@ -176,7 +230,6 @@ function render() {
     gl.uniformMatrix4fv(uModelViewMatrixLoc, false, identMatrix);
 
     let shapeModel = new Model(shapeMesh);
-    DONT CREATE NEW VBO/VAO EVERY FRAME!
     gl.bindVertexArray(shapeModel.vao);
 
     const offset = 0;
@@ -184,4 +237,4 @@ function render() {
     gl.drawArrays(gl.TRIANGLE_STRIP, offset, vertexCount);
 }
 
-export {Shader, init, resize, rect, render};
+export {Shader, init, resize, rect, circle, render};

@@ -16,7 +16,8 @@ window.onload = function () {
     //let highlightsShader = new gfx.Shader();
     //let spriteShader = new gfx.Shader();
     function render() {
-        gfx.rect(30, 90);
+        gfx.rect(60, 30);
+        //gfx.circle(60);
         gfx.render();
 
 
