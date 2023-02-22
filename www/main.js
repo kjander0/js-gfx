@@ -10,14 +10,24 @@ function onresize () {
 window.onload = function () {
     gfx.init(canvas);
 
+    let tex = gfx.Texture.fromUrl("assets/ship.png");
+
     window.onresize = onresize;
 
     //let highlightsTex = new gfx.Texture();
     //let highlightsShader = new gfx.Shader();
     //let spriteShader = new gfx.Shader();
     function render() {
+        gfx.pushTransform(gfx.Transform.translation(-10, -10));
         gfx.rect(60, 30);
-        //gfx.circle(60);
+        gfx.pushTransform(gfx.Transform.translation(-100, -100));
+        gfx.rect(60, 30);
+        gfx.pushTransform(gfx.Transform.translation(-150, -150));
+        gfx.circle(60);
+
+        gfx.pushTransform(gfx.Transform.translation(100, 100));
+        gfx.sprite(tex);
+
         gfx.render();
 
 
