@@ -18,15 +18,12 @@ window.onload = function () {
     //let highlightsShader = new gfx.Shader();
     //let spriteShader = new gfx.Shader();
     function render() {
-        gfx.pushTransform(gfx.Transform.translation(-10, -10));
-        gfx.rect(60, 30);
-        gfx.pushTransform(gfx.Transform.translation(-100, -100));
-        gfx.rect(60, 30);
-        gfx.pushTransform(gfx.Transform.translation(-150, -150));
-        gfx.circle(60);
-
-        gfx.pushTransform(gfx.Transform.translation(100, 100));
-        gfx.sprite(tex);
+        gfx.drawRect(-20, -20, 60, 30);
+        gfx.setColor(0.6, 0.3, 0.5);
+        gfx.drawRect(-100, -100, 60, 30);
+        gfx.setColor(0, 0.7, 0.2);
+        gfx.drawCircle(-150, -150, 60);
+        gfx.drawTexture(0, 0, 100, 100, tex);
 
         gfx.render();
 

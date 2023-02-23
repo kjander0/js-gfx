@@ -1,17 +1,15 @@
 class Texture {
     glTexture;
-    width;
-    height;
+    s0 = 0;
+    s1 = 1;
+    t0 = 0;
+    t1 = 1;
 
     static fromUrl(url) {
         const glTexture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, glTexture);
     
-        // Because images have to be downloaded over the internet
-        // they might take a moment until they are ready.
-        // Until then put a single pixel in the texture so we can
-        // use it immediately. When the image has finished downloading
-        // we'll update the texture with the contents of the image.
+        // TODO: best to preload textures (currently storing 1 blue pixel in texure while it downloads)
         const level = 0;
         const internalFormat = gl.RGBA;
         const width = 1;
@@ -46,7 +44,7 @@ class Texture {
         
             gl.generateMipmap(gl.TEXTURE_2D);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
-            //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         };
         image.src = url;
         
@@ -84,12 +82,20 @@ class Shader {
 
 class Mesh {
     attribs;
-    color = [1.0, 0.8, 0.5];
-    transform = new Transform();
-    data = [];
+    color;
+    transform;
+    data;
 
     constructor(attribs) {
         this.attribs = attribs;
+        this.clear(); //initialize
+
+    }
+
+    clear() {
+        this.color = [1.0, 0.8, 0.5];
+        this.transform = new Transform();
+        this.data = [];
     }
 
     setTransform(t) {
@@ -106,7 +112,7 @@ class Mesh {
         [x, y] = this.transform.mulXY(x, y);
         this.data.push(x, y);
         if ((this.attribs & ATTRIB_COLOR) === ATTRIB_COLOR) {
-            this.data.concat(this.color);
+            this.data.push(this.color[0], this.color[1], this.color[2]);
         }
 
         if ((this.attribs & ATTRIB_TEX) === ATTRIB_TEX) {
@@ -120,10 +126,17 @@ class Model {
     vao;
     vbo;
     drawMode;
+    shader;
     numElements;
+    attribs;
+    glTexture;
 
-    constructor(mesh, drawMode) {
+    constructor(mesh, drawMode, shader, glTexture) {
         this.drawMode = drawMode;
+        this.shader = shader;
+        this.attribs = mesh.attribs;
+        this.glTexture = glTexture;
+
         this.vao = gl.createVertexArray();
         gl.bindVertexArray(this.vao);
 
@@ -135,9 +148,13 @@ class Model {
         const floatBytes = Float32Array.BYTES_PER_ELEMENT;
         let elementSize = 2;
         let colorOffset = 2 * floatBytes;
+        let texOffset = 2 * floatBytes;
         if ((mesh.attribs & ATTRIB_COLOR) === ATTRIB_COLOR) {
             elementSize += 3;
-            colorOffset = 3 * floatBytes;
+            texOffset += 3 * floatBytes;
+        }
+        if ((mesh.attribs & ATTRIB_TEX) === ATTRIB_TEX) {
+            elementSize += 2;
         }
         let stride = elementSize * floatBytes;
         this.numElements = mesh.data.length / elementSize;
@@ -145,8 +162,15 @@ class Model {
         gl.vertexAttribPointer(ATTRIB_POS_LOC, 2, gl.FLOAT, false, stride, 0);
         gl.enableVertexAttribArray(ATTRIB_POS_LOC);
 
-        gl.vertexAttribPointer(ATTRIB_COLOR_LOC, 3, gl.FLOAT, false, stride, colorOffset);
-        gl.enableVertexAttribArray(ATTRIB_COLOR_LOC);
+        if ((mesh.attribs & ATTRIB_COLOR) === ATTRIB_COLOR) {
+            gl.vertexAttribPointer(ATTRIB_COLOR_LOC, 3, gl.FLOAT, false, stride, colorOffset);
+            gl.enableVertexAttribArray(ATTRIB_COLOR_LOC);
+        }
+
+        if ((mesh.attribs & ATTRIB_TEX) === ATTRIB_TEX) {
+            gl.vertexAttribPointer(ATTRIB_TEX_LOC, 2, gl.FLOAT, false, stride, texOffset);
+            gl.enableVertexAttribArray(ATTRIB_TEX_LOC);
+        }
     }
 }
 
@@ -190,16 +214,20 @@ let camMatrix;
 let camX = 0, camY = 0;
 
 let shapeMesh;
-let spriteMesh;
+let texMesh;
 
-let shapeShader, spriteShader;
+let globalTexture;
+
+let shapeShader, texShader;
 
 const shapeVertSrc = `#version 300 es
 layout (location=0) in vec2 aVertexPosition;
-layout (location=1) in vec2 aColor;
+layout (location=1) in vec3 aColor;
 
+out vec4 vColor;
 uniform mat4 uCamMatrix;
 void main() {
+    vColor = vec4(aColor, 1);
     vec4 pos = vec4(aVertexPosition, 0, 1);
     gl_Position = uCamMatrix * pos;
 }`;
@@ -207,31 +235,37 @@ void main() {
 const shapeFragSrc = `#version 300 es
 precision mediump float;
 out vec4 fragColor;
+in vec4 vColor;
 void main() {
-    fragColor = vec4(1.0, 0.2, 0.2, 1.0);
+    fragColor = vColor;
 }`;
 
-const spriteVertSrc = `#version 300 es
+const texVertSrc = `#version 300 es
 layout (location=0) in vec2 aVertexPosition;
-layout (location=2) in vec2 aTexCoords;
+layout (location=2) in vec2 aTexCoord;
 
+out vec2 vTexCoord;
 uniform mat4 uCamMatrix;
 
+
 void main() {
+    vTexCoord = aTexCoord;
     vec4 pos = vec4(aVertexPosition, 0, 1);
     gl_Position = uCamMatrix * pos;
 }`;
 
-const spriteFragSrc = `#version 300 es
+const texFragSrc = `#version 300 es
 precision mediump float;
+uniform sampler2D uTex;
+in vec2 vTexCoord;
 out vec4 fragColor;
 void main() {
-    fragColor = vec4(1.0, 0.2, 0.2, 1.0);
+    fragColor = texture(uTex, vTexCoord);
 }`;
 
 function init(targetCanvas) {
     canvas = targetCanvas;
-    console.log("init", targetCanvas);
+    // TODO: do not get context with depth buffer if we don't need it
     gl = canvas.getContext("webgl2");
     if (gl === null) {
         throw "could not get webgl2 context";
@@ -239,9 +273,10 @@ function init(targetCanvas) {
     gl.disable(gl.DEPTH_TEST);
 
     shapeShader = new Shader(shapeVertSrc, shapeFragSrc);
-    spriteShader = new Shader(spriteVertSrc, spriteFragSrc);
+    texShader = new Shader(texVertSrc, texFragSrc);
 
-    shapeMesh = new Mesh(ATTRIB_POS);
+    shapeMesh = new Mesh(ATTRIB_POS | ATTRIB_COLOR);
+    texMesh = new Mesh(ATTRIB_POS | ATTRIB_TEX);
 
     transform = new Transform();
 
@@ -275,56 +310,88 @@ function updateCam() {
       ];
 }
 
+function setColor(r, g, b) {
+    shapeMesh.setColor(r, g, b);
+}
+
 function pushTransform(t) {
     transform = t;
 }
 
-function rect(width, height) {
+function drawRect(x, y, width, height) {
     shapeMesh.setTransform(transform);
-    shapeMesh.add(0, 0);
-    shapeMesh.add(width, 0);
-    shapeMesh.add(width, height);
-    shapeMesh.add(0, 0);
-    shapeMesh.add(width, height);
-    shapeMesh.add(0, height);
+    shapeMesh.add(x, y);
+    shapeMesh.add(x+width, y);
+    shapeMesh.add(x+width, y+height);
+    shapeMesh.add(x, y);
+    shapeMesh.add(x+width, y+height);
+    shapeMesh.add(x, y+height);
 }
 
-function circle(radius) {
+function drawCircle(x, y, radius) {
     shapeMesh.setTransform(transform);
     const resolution = 36;
     const rads = 2 * Math.PI / resolution;
     for (let i = 0; i < resolution; i++) {
         let rad0 = i * rads;
         let rad1 = (i+1) * rads;
-        shapeMesh.add(0, 0);
-        shapeMesh.add(radius * Math.cos(rad0), radius * Math.sin(rad0));
-        shapeMesh.add(radius * Math.cos(rad1), radius * Math.sin(rad1));
+        shapeMesh.add(x, y);
+        shapeMesh.add(x+radius * Math.cos(rad0), y+radius * Math.sin(rad0));
+        shapeMesh.add(x+radius * Math.cos(rad1), y+radius * Math.sin(rad1));
     }
 }
 
-function sprite(texture) {
-    spriteMesh.setTransform(transform);
-    spriteMesh.add(0, 0, 0, 0);
-    spriteMesh.add(width, 0, 1, 0);
-    spriteMesh.add(width, height, 1, 1);
-    spriteMesh.add(0, 0, 0, 0);
-    spriteMesh.add(width, height, 1, 1);
-    spriteMesh.add(0, height, 0, 1);
+function drawTexture(x, y, width, height, texture) {
+    globalTexture = texture;
+    texMesh.setTransform(transform);
+    texMesh.add(x, y, texture.s0, texture.t0);
+    texMesh.add(x+width, y, texture.s1, texture.t0);
+    texMesh.add(x+width, y+height, texture.s1, texture.t1);
+    texMesh.add(x, y, texture.s0, texture.t0);
+    texMesh.add(x+width, y+height, texture.s1, texture.t1);
+    texMesh.add(x, y+height, texture.s0, texture.t1);
 }
 
 function render() {
     gl.clearColor(0.0, 0.0, 0.0, 1.0); // Clear to black, fully opaque
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    gl.useProgram(shapeShader.prog);
-    
-    let uCamMatrixLoc = gl.getUniformLocation(shapeShader.prog, "uCamMatrix");
-    gl.uniformMatrix4fv(uCamMatrixLoc, false, camMatrix);
 
-    let shapeModel = new Model(shapeMesh, gl.TRIANGLES);
-    gl.bindVertexArray(shapeModel.vao);
+    let models = [
+        new Model(shapeMesh, gl.TRIANGLES, shapeShader),
+        new Model(texMesh, gl.TRIANGLES, texShader, globalTexture.glTexture),
+    ]
 
-    gl.drawArrays(shapeModel.drawMode, 0, shapeModel.numElements);
+    for (let model of models) {
+        _drawModel(model);
+    }
+
+    shapeMesh.clear();
+    texMesh.clear();
 }
 
-export {Shader, Transform, Texture, init, resize, pushTransform, rect, circle, render};
+function _drawModel(model) {
+    if (model.numElements === 0) {
+        return;
+    }
+
+    let prog = model.shader.prog;
+    gl.useProgram(prog);
+
+
+    let uCamMatrixLoc = gl.getUniformLocation(prog, "uCamMatrix");
+    gl.uniformMatrix4fv(uCamMatrixLoc, false, camMatrix);
+
+    if ((model.attribs & ATTRIB_TEX) === ATTRIB_TEX) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, model.glTexture);
+        let uTexLoc = gl.getUniformLocation(prog, "uTex");
+        gl.uniform1i(uTexLoc, 0); // Texture unit 0
+    }
+
+    gl.bindVertexArray(model.vao);
+
+    gl.drawArrays(model.drawMode, 0, model.numElements);
+}
+
+export {Shader, Transform, Texture, init, resize, setColor, pushTransform, drawRect, drawCircle, drawTexture, render};
