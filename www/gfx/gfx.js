@@ -1,3 +1,5 @@
+// TODO: delete vbo, vao, texture, framebuffer, renderbuffer after use
+
 class Texture {
     glTexture;
     s0 = 0;
@@ -5,15 +7,34 @@ class Texture {
     t0 = 0;
     t1 = 1;
 
+    width;
+    height;
+
+    static fromSize(width, height) {
+        let tex = new Texture();
+        tex.width = width;
+        tex.height = height;
+        tex.glTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex.glTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, tex.width, tex.height, 0, gl.RGB, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        return tex;
+    }
+
     static fromUrl(url) {
-        const glTexture = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, glTexture);
+        let tex = new Texture();
+        tex.glTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex.glTexture);
+
+        tex.width = 1;
+        tex.height = 1;
     
         // TODO: best to preload textures (currently storing 1 blue pixel in texure while it downloads)
         const level = 0;
         const internalFormat = gl.RGBA;
-        const width = 1;
-        const height = 1;
         const border = 0;
         const srcFormat = gl.RGBA;
         const srcType = gl.UNSIGNED_BYTE;
@@ -22,8 +43,8 @@ class Texture {
             gl.TEXTURE_2D,
             level,
             internalFormat,
-            width,
-            height,
+            tex.width,
+            tex.height,
             border,
             srcFormat,
             srcType,
@@ -32,7 +53,10 @@ class Texture {
     
         const image = new Image();
         image.onload = () => {
-            gl.bindTexture(gl.TEXTURE_2D, glTexture);
+            tex.width = image.naturalWidth;
+            tex.height = image.naturalHeight;
+
+            gl.bindTexture(gl.TEXTURE_2D, tex.glTexture);
             gl.texImage2D(
                 gl.TEXTURE_2D,
                 level,
@@ -45,11 +69,11 @@ class Texture {
             gl.generateMipmap(gl.TEXTURE_2D);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);	
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         };
         image.src = url;
         
-        let tex = new Texture();
-        tex.glTexture = glTexture;
         return tex;
     }
 }
@@ -129,13 +153,13 @@ class Model {
     shader;
     numElements;
     attribs;
-    glTexture;
+    textures;
 
-    constructor(mesh, drawMode, shader, glTexture) {
+    constructor(mesh, drawMode, shader, textures=null) {
         this.drawMode = drawMode;
         this.shader = shader;
         this.attribs = mesh.attribs;
-        this.glTexture = glTexture;
+        this.textures = textures;
 
         this.vao = gl.createVertexArray();
         gl.bindVertexArray(this.vao);
@@ -178,6 +202,10 @@ class Transform {
     mat = new Float32Array(9);
 
     constructor() {
+        this.identity();
+    }
+
+    identity() {
         this.mat[0] = 1; this.mat[3] = 0; this.mat[6] = 0;
         this.mat[1] = 0; this.mat[4] = 1; this.mat[7] = 0;
         this.mat[2] = 0; this.mat[5] = 0; this.mat[8] = 1;
@@ -187,6 +215,22 @@ class Transform {
         let newX = x * this.mat[0] + y * this.mat[3] + this.mat[6];
         let newY = x * this.mat[1] + y * this.mat[4] + this.mat[7];
         return [newX, newY];
+    }
+
+    combine(other) {
+        let c = new Transform();
+        c.mat[0] = this.mat[0] * other.mat[0] + this.mat[3] * other.mat[1] + this.mat[6] * other.mat[2];
+        c.mat[1] = this.mat[1] * other.mat[0] + this.mat[4] * other.mat[1] + this.mat[7] * other.mat[2];
+        c.mat[2] = this.mat[2] * other.mat[0] + this.mat[5] * other.mat[1] + this.mat[8] * other.mat[2];
+
+        c.mat[3] = this.mat[0] * other.mat[3] + this.mat[3] * other.mat[4] + this.mat[6] * other.mat[5];
+        c.mat[4] = this.mat[1] * other.mat[3] + this.mat[4] * other.mat[4] + this.mat[7] * other.mat[5];
+        c.mat[5] = this.mat[2] * other.mat[3] + this.mat[5] * other.mat[4] + this.mat[8] * other.mat[5];
+
+        c.mat[6] = this.mat[0] * other.mat[6] + this.mat[3] * other.mat[7] + this.mat[6] * other.mat[8];
+        c.mat[7] = this.mat[1] * other.mat[6] + this.mat[4] * other.mat[7] + this.mat[7] * other.mat[8];
+        c.mat[8] = this.mat[2] * other.mat[6] + this.mat[5] * other.mat[7] + this.mat[8] * other.mat[8];
+        return c;
     }
 
     static translation(x, y) {
@@ -209,27 +253,28 @@ const ATTRIB_TEX_LOC = 2;
 let canvas;
 let gl;
 
-let transform;
-let camMatrix;
-let camX = 0, camY = 0;
+let transformStack = [new Transform()];
+let projMatrix;
 
 let shapeMesh;
-let texMesh;
+let texMeshMap = new Map();
 
-let globalTexture;
+let models = [];
 
 let shapeShader, texShader;
+
+let fbo;
 
 const shapeVertSrc = `#version 300 es
 layout (location=0) in vec2 aVertexPosition;
 layout (location=1) in vec3 aColor;
 
 out vec4 vColor;
-uniform mat4 uCamMatrix;
+uniform mat4 uProjMatrix;
 void main() {
     vColor = vec4(aColor, 1);
     vec4 pos = vec4(aVertexPosition, 0, 1);
-    gl_Position = uCamMatrix * pos;
+    gl_Position = uProjMatrix * pos;
 }`;
 
 const shapeFragSrc = `#version 300 es
@@ -245,42 +290,53 @@ layout (location=0) in vec2 aVertexPosition;
 layout (location=2) in vec2 aTexCoord;
 
 out vec2 vTexCoord;
-uniform mat4 uCamMatrix;
-
+uniform mat4 uProjMatrix;
 
 void main() {
     vTexCoord = aTexCoord;
     vec4 pos = vec4(aVertexPosition, 0, 1);
-    gl_Position = uCamMatrix * pos;
+    gl_Position = uProjMatrix * pos;
 }`;
 
 const texFragSrc = `#version 300 es
 precision mediump float;
-uniform sampler2D uTex;
+
+uniform sampler2D uTex0;
+
 in vec2 vTexCoord;
 out vec4 fragColor;
+
 void main() {
-    fragColor = texture(uTex, vTexCoord);
+    fragColor = texture(uTex0, vTexCoord);
 }`;
 
 function init(targetCanvas) {
     canvas = targetCanvas;
-    // TODO: do not get context with depth buffer if we don't need it
-    gl = canvas.getContext("webgl2");
+    gl = canvas.getContext("webgl2", {
+        alpha: false,
+        depth: false,
+        stencil: false,
+        // TODO: try enable antialias
+    });
+
     if (gl === null) {
         throw "could not get webgl2 context";
     }
+
+    // TODO: do not get context with depth buffer if we don't need it
     gl.disable(gl.DEPTH_TEST);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     shapeShader = new Shader(shapeVertSrc, shapeFragSrc);
     texShader = new Shader(texVertSrc, texFragSrc);
 
     shapeMesh = new Mesh(ATTRIB_POS | ATTRIB_COLOR);
-    texMesh = new Mesh(ATTRIB_POS | ATTRIB_TEX);
-
-    transform = new Transform();
 
     _resize(canvas.clientWidth, canvas.clientHeight); // initial resize
+
+    fbo = gl.createFramebuffer();
 }
 
 function _resize(width, height) {
@@ -302,11 +358,11 @@ function updateCam() {
     const scaleX = 2 / gl.drawingBufferWidth;
     const scaleY = 2 / gl.drawingBufferHeight;
 
-    camMatrix = [
+    projMatrix = [
         scaleX, 0, 0, 0,
         0, scaleY, 0, 0,
         0, 0, -1, 0,
-        -scaleX * camX, -scaleY * camY, 0, 1,
+        -1, -1, 0, 1,
       ];
 }
 
@@ -315,11 +371,22 @@ function setColor(r, g, b) {
 }
 
 function pushTransform(t) {
-    transform = t;
+    transformStack.push(transformStack[transformStack.length-1].combine(t));
+}
+
+function popTransform() {
+    if (transformStack.length < 2) {
+        return;
+    }
+    transformStack.pop();
+}
+
+function getTransform() {
+    return transformStack[transformStack.length-1];
 }
 
 function drawRect(x, y, width, height) {
-    shapeMesh.setTransform(transform);
+    shapeMesh.setTransform(transformStack[transformStack.length-1]);
     shapeMesh.add(x, y);
     shapeMesh.add(x+width, y);
     shapeMesh.add(x+width, y+height);
@@ -329,7 +396,7 @@ function drawRect(x, y, width, height) {
 }
 
 function drawCircle(x, y, radius) {
-    shapeMesh.setTransform(transform);
+    shapeMesh.setTransform(transformStack[transformStack.length-1]);
     const resolution = 36;
     const rads = 2 * Math.PI / resolution;
     for (let i = 0; i < resolution; i++) {
@@ -341,36 +408,56 @@ function drawCircle(x, y, radius) {
     }
 }
 
-function drawTexture(x, y, width, height, texture) {
-    globalTexture = texture;
-    texMesh.setTransform(transform);
-    texMesh.add(x, y, texture.s0, texture.t0);
-    texMesh.add(x+width, y, texture.s1, texture.t0);
-    texMesh.add(x+width, y+height, texture.s1, texture.t1);
-    texMesh.add(x, y, texture.s0, texture.t0);
-    texMesh.add(x+width, y+height, texture.s1, texture.t1);
-    texMesh.add(x, y+height, texture.s0, texture.t1);
+function drawTexture(x, y, width, height, texture, mesh=null) {
+    if (mesh === null) {
+        mesh = texMeshMap.get(texture);
+        if (mesh === undefined) {
+            mesh = new Mesh(ATTRIB_POS | ATTRIB_TEX);
+            texMeshMap.set(texture, mesh);
+        }
+    }
+
+    mesh.setTransform(transformStack[transformStack.length-1]);
+    mesh.add(x, y, texture.s0, texture.t0);
+    mesh.add(x+width, y, texture.s1, texture.t0);
+    mesh.add(x+width, y+height, texture.s1, texture.t1);
+    mesh.add(x, y, texture.s0, texture.t0);
+    mesh.add(x+width, y+height, texture.s1, texture.t1);
+    mesh.add(x, y+height, texture.s0, texture.t1);
 }
 
-function render() {
+function drawModel(model) {
+    models.push(model);
+}
+
+function render(targetTexture=null) {
+    if (targetTexture !== null) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, targetTexture.glTexture, 0);
+        console.assert(gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE);
+    } else {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+
     gl.clearColor(0.0, 0.0, 0.0, 1.0); // Clear to black, fully opaque
     gl.clear(gl.COLOR_BUFFER_BIT);
 
 
-    let models = [
-        new Model(shapeMesh, gl.TRIANGLES, shapeShader),
-        new Model(texMesh, gl.TRIANGLES, texShader, globalTexture.glTexture),
-    ]
+    models.push(new Model(shapeMesh, gl.TRIANGLES, shapeShader));
+    shapeMesh.clear();
+
+    texMeshMap.forEach((mesh, texture) => {
+        models.push(new Model(mesh, gl.TRIANGLES, texShader, [texture]));
+        mesh.clear();
+    });
 
     for (let model of models) {
-        _drawModel(model);
+        _renderModel(model);
     }
-
-    shapeMesh.clear();
-    texMesh.clear();
+    models = [];
 }
 
-function _drawModel(model) {
+function _renderModel(model) {
     if (model.numElements === 0) {
         return;
     }
@@ -379,14 +466,17 @@ function _drawModel(model) {
     gl.useProgram(prog);
 
 
-    let uCamMatrixLoc = gl.getUniformLocation(prog, "uCamMatrix");
-    gl.uniformMatrix4fv(uCamMatrixLoc, false, camMatrix);
+    let uProjMatrixLoc = gl.getUniformLocation(prog, "uProjMatrix");
+    gl.uniformMatrix4fv(uProjMatrixLoc, false, projMatrix);
 
     if ((model.attribs & ATTRIB_TEX) === ATTRIB_TEX) {
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, model.glTexture);
-        let uTexLoc = gl.getUniformLocation(prog, "uTex");
-        gl.uniform1i(uTexLoc, 0); // Texture unit 0
+        for (let i = 0; i < model.textures.length; i++) {
+            let tex = model.textures[i];
+            gl.activeTexture(gl.TEXTURE0 + i);
+            gl.bindTexture(gl.TEXTURE_2D, tex.glTexture);
+            let uTexLoc = gl.getUniformLocation(prog, "uTex"+i);
+            gl.uniform1i(uTexLoc, i);
+        }
     }
 
     gl.bindVertexArray(model.vao);
@@ -394,4 +484,25 @@ function _drawModel(model) {
     gl.drawArrays(model.drawMode, 0, model.numElements);
 }
 
-export {Shader, Transform, Texture, init, resize, setColor, pushTransform, drawRect, drawCircle, drawTexture, render};
+export {
+    Shader,
+    Transform,
+    Texture,
+    Mesh,
+    Model,
+    init,
+    resize,
+    setColor,
+    pushTransform,
+    popTransform,
+    getTransform,
+    drawRect,
+    drawCircle,
+    drawTexture,
+    drawModel,
+    render,
+    gl,
+    ATTRIB_POS,
+    ATTRIB_COLOR,
+    ATTRIB_TEX,
+};
