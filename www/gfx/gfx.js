@@ -146,20 +146,32 @@ class Mesh {
     }
 };
 
+class DrawParams {
+    drawMode;
+    shader;
+    textures = [];
+    color = [1.0, 0.8, 0.5];
+    
+    consructor(drawMode, shader) {
+        this.drawMode = drawMode;
+        this.shader = shader;
+    }
+}
+
 class Model {
     vao;
     vbo;
-    drawMode;
-    shader;
     numElements;
     attribs;
+    drawMode;
+    shader;
     textures;
 
     constructor(mesh, drawMode, shader, textures=null) {
         this.drawMode = drawMode;
         this.shader = shader;
-        this.attribs = mesh.attribs;
         this.textures = textures;
+        this.attribs = mesh.attribs;
 
         this.vao = gl.createVertexArray();
         gl.bindVertexArray(this.vao);
@@ -256,9 +268,8 @@ let gl;
 let transformStack = [new Transform()];
 let projMatrix;
 
-let shapeMesh;
-let texMeshMap = new Map();
-
+let drawParams;
+let currentMesh = null;
 let models = [];
 
 let shapeShader, texShader;
@@ -366,10 +377,6 @@ function updateCam() {
       ];
 }
 
-function setColor(r, g, b) {
-    shapeMesh.setColor(r, g, b);
-}
-
 function pushTransform(t) {
     transformStack.push(transformStack[transformStack.length-1].combine(t));
 }
@@ -385,45 +392,60 @@ function getTransform() {
     return transformStack[transformStack.length-1];
 }
 
-function drawRect(x, y, width, height) {
-    shapeMesh.setTransform(transformStack[transformStack.length-1]);
-    shapeMesh.add(x, y);
-    shapeMesh.add(x+width, y);
-    shapeMesh.add(x+width, y+height);
-    shapeMesh.add(x, y);
-    shapeMesh.add(x+width, y+height);
-    shapeMesh.add(x, y+height);
+function setDrawParams(params) {
+    SIMPLIFY
+    addRect
+    addSphere can be mesh functions
+    list of models that get rendered
+    uniforms get set to shader
+    light fadeoff can be done in color attribute
+
+    drawRect, drawCircle (shapes) can stay as useful debug draw functions
+
+    if (currentMesh !== null) {
+        models.push(new Model(currentMesh, drawParams.drawMode, drawParams.shader, drawParams.textures));
+    }
+    drawParams = params;
+    let attribs = ATTRIB_POS;
+    if (drawParams.textures.length > 0) {
+        attribs |= ATTRIB_TEX;
+    } else {
+        attribs |= ATTRIB_COLOR;
+    }
+    currentMesh = new Mesh(attribs);
 }
 
-function drawCircle(x, y, radius) {
+function drawRect(x, y, width, height, s0=0, s1=1, t0=0, t1=1) {
+    shapeMesh.setTransform(transformStack[transformStack.length-1]);
+    mesh.add(x, y, s0, t0);
+    mesh.add(x+width, y, s1, t0);
+    mesh.add(x+width, y+height, s1, t1);
+    mesh.add(x, y, s0, t0);
+    mesh.add(x+width, y+height, s1, t1);
+    mesh.add(x, y+height, s0, t1);
+}
+
+function drawCircle(x, y, radius, s0=0, s1=1, t0=0, t1=1) {
     shapeMesh.setTransform(transformStack[transformStack.length-1]);
     const resolution = 36;
     const rads = 2 * Math.PI / resolution;
     for (let i = 0; i < resolution; i++) {
         let rad0 = i * rads;
         let rad1 = (i+1) * rads;
-        shapeMesh.add(x, y);
-        shapeMesh.add(x+radius * Math.cos(rad0), y+radius * Math.sin(rad0));
-        shapeMesh.add(x+radius * Math.cos(rad1), y+radius * Math.sin(rad1));
+        shapeMesh.add(x, y, 0.5, 0.5);
+        shapeMesh.add(
+            x+radius * Math.cos(rad0),
+            y+radius * Math.sin(rad0),
+            0.5 + Math.cos(rad0),
+            0.5 + Math.sin(rad0),
+        );
+        shapeMesh.add(
+            x+radius * Math.cos(rad1),
+            y+radius * Math.sin(rad1),
+            0.5 + Math.cos(rad1),
+            0.5 + Math.sin(rad1),
+        );
     }
-}
-
-function drawTexture(x, y, width, height, texture, mesh=null) {
-    if (mesh === null) {
-        mesh = texMeshMap.get(texture);
-        if (mesh === undefined) {
-            mesh = new Mesh(ATTRIB_POS | ATTRIB_TEX);
-            texMeshMap.set(texture, mesh);
-        }
-    }
-
-    mesh.setTransform(transformStack[transformStack.length-1]);
-    mesh.add(x, y, texture.s0, texture.t0);
-    mesh.add(x+width, y, texture.s1, texture.t0);
-    mesh.add(x+width, y+height, texture.s1, texture.t1);
-    mesh.add(x, y, texture.s0, texture.t0);
-    mesh.add(x+width, y+height, texture.s1, texture.t1);
-    mesh.add(x, y+height, texture.s0, texture.t1);
 }
 
 function drawModel(model) {
@@ -492,10 +514,10 @@ export {
     Model,
     init,
     resize,
-    setColor,
     pushTransform,
     popTransform,
     getTransform,
+    setDrawParams,
     drawRect,
     drawCircle,
     drawTexture,

@@ -20,17 +20,16 @@ void main() {
 const lightsFragSrc = `#version 300 es
 precision mediump float;
 
-uniform sampler2D uTex0; // albedo
-uniform sampler2D uTex1; // normals
+uniform sampler2D uTex0; // normals
 
 in vec2 vTexCoord;
 out vec4 fragColor;
 
 void main() {
-    vec3 normalSample = texture(uTex1, vTexCoord).rgb;
+    vec3 normalSample = texture(uTex0, vTexCoord).rgb;
     vec3 normal = 2.f * normalSample - vec3(1.f);
     vec3 lightDir = normalize(vec3(1, 1, 1));
-    fragColor = dot(normal, lightDir) * texture(uTex0, vTexCoord);
+    fragColor = dot(normal, lightDir) * vec4(1.1, 0.f, 0.f, 1.f);
 }`;
 
 function onresize () {
@@ -45,7 +44,7 @@ window.onload = function () {
     let shipAlbedoTex = gfx.Texture.fromUrl("assets/ship.png");
     let shipNormalTex = gfx.Texture.fromUrl("assets/ship_normal.png");
 
-    let albedoTex = gfx.Texture.fromSize(
+    let highlightTex = gfx.Texture.fromSize(
         gfx.gl.drawingBufferWidth,
         gfx.gl.drawingBufferHeight
     );
@@ -62,20 +61,9 @@ window.onload = function () {
         let camTransform = gfx.Transform.translation(gfx.gl.drawingBufferWidth/2 - camX, gfx.gl.drawingBufferHeight/2 -camY);
         gfx.pushTransform(camTransform);
 
-        // Draw albedo to offscreen texture
-        gfx.drawTexture(0, 0, 100, 100, shipAlbedoTex);
-        gfx.render(albedoTex);
-
         // Draw normals to offscreen texture
         gfx.drawTexture(0, 0, 100, 100, shipNormalTex);
         gfx.render(normalTex);
-
-        //gfx.popTransform();
-
-        // Draw albedo to screen
-        //gfx.drawTexture(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight, albedoTex);
-
-        //gfx.pushTransform(camTransform);
 
         // Draw highlights for each light
         function drawLight(x, y, radius, mesh) {
@@ -85,7 +73,7 @@ window.onload = function () {
             const screenHeight = gfx.gl.drawingBufferHeight;
 
             function addPoint(x, y) {
-                Should use inverse here
+                // TODO Use matrix inverse via to get tex coords
                 let offsetX = gfx.getTransform().mat[6];
                 let offsetY = gfx.getTransform().mat[7];
                 mesh.add(x, y, (x + offsetX) / screenWidth, (y + offsetY) / screenHeight);
@@ -102,13 +90,15 @@ window.onload = function () {
         let lightsMesh = new gfx.Mesh(gfx.ATTRIB_POS | gfx.ATTRIB_TEX);
         lightsMesh.setTransform(gfx.getTransform());
         drawLight(0, 0, 150, lightsMesh);
-        let textures = [albedoTex, normalTex];
-        let lightsModel = new gfx.Model(lightsMesh, gfx.gl.TRIANGLES, lightsShader, textures);
+        let lightsModel = new gfx.Model(lightsMesh, gfx.gl.TRIANGLES, lightsShader, [normalTex]);
         gfx.drawModel(lightsModel);
-
-        gfx.render();
+        gfx.render(highlightTex);
 
         gfx.popTransform();
+        gfx.drawTexture(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight, highlightTex);
+        //gfx.drawTexture(0, 0, 100, 100, shipAlbedoTex);
+        gfx.render();
+
 
         window.requestAnimationFrame(render);
     };
