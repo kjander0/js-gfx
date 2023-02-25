@@ -105,13 +105,14 @@ class Shader {
 };
 
 class Mesh {
-    attribs;
+    attribBits;
     color;
     transform;
     data;
+    numVertices = 0;
 
-    constructor(attribs) {
-        this.attribs = attribs;
+    constructor(attribBits) {
+        this.attribBits = attribBits;
         this.clear(); //initialize
 
     }
@@ -133,45 +134,102 @@ class Mesh {
     }
 
     add(x, y, s, t) {
+        this.numVertices++;
+
         [x, y] = this.transform.mulXY(x, y);
         this.data.push(x, y);
-        if ((this.attribs & ATTRIB_COLOR) === ATTRIB_COLOR) {
+        if ((this.attribBits & ATTRIB_COLOR) === ATTRIB_COLOR) {
             this.data.push(this.color[0], this.color[1], this.color[2]);
         }
 
-        if ((this.attribs & ATTRIB_TEX) === ATTRIB_TEX) {
+        if ((this.attribBits & ATTRIB_TEX) === ATTRIB_TEX) {
             console.assert(s !== undefined && t !== undefined);
             this.data.push(s, t);
         }
     }
+
+    addRect(x, y, width, height, s0=0, t0=0, s1=1, t1=1) {
+        this.add(x, y, s0, t0);
+        this.add(x+width, y, s1, t0);
+        this.add(x+width, y+height, s1, t1);
+        this.add(x, y, s0, t0);
+        this.add(x+width, y+height, s1, t1);
+        this.add(x, y+height, s0, t1);
+    }
+    
+    addCircle(x, y, radius, s0=0, t0=0, s1=1, t1=1) {
+        const resolution = 36;
+        const rads = 2 * Math.PI / resolution;
+        const sDiff = s1 - s0;
+        const tDiff = t1 - t0;
+        for (let i = 0; i < resolution; i++) {
+            let rad0 = i * rads;
+            let rad1 = (i+1) * rads;
+            this.add(x, y, (s0 + s1)/2, (t0 + t1)/2);
+            this.add(
+                x+radius * Math.cos(rad0),
+                y+radius * Math.sin(rad0),
+                s0 + sDiff/2 * (1 + Math.cos(rad0)),
+                t0 + tDiff/2 * (1 + Math.sin(rad0)),
+            );
+            this.add(
+                x+radius * Math.cos(rad1),
+                y+radius * Math.sin(rad1),
+                s0 + sDiff/2 * (1 + Math.cos(rad1)),
+                t0 + tDiff/2 * (1 + Math.sin(rad1)),
+            );
+        }
+    }
 };
 
-class DrawParams {
-    drawMode;
-    shader;
-    textures = [];
-    color = [1.0, 0.8, 0.5];
-    
-    consructor(drawMode, shader) {
-        this.drawMode = drawMode;
-        this.shader = shader;
+class VertexAttrib {
+    loc;
+    size;
+    type;
+    divisor;
+
+    constructor(loc, size, type, divisor=0) {
+        this.loc = loc;
+        this.size = size;
+        this.type = type;
+        this.divisor = divisor;
     }
 }
 
 class Model {
     vao;
     vbo;
-    numElements;
-    attribs;
+    numVertices;
+    attribBits;
     drawMode;
     shader;
     textures;
+    numInstances;
 
-    constructor(mesh, drawMode, shader, textures=null) {
+    constructor(mesh, drawMode, shader, textures=null, extraAttribs=null, numInstances=1) {
         this.drawMode = drawMode;
         this.shader = shader;
         this.textures = textures;
-        this.attribs = mesh.attribs;
+        this.numInstances = numInstances;
+
+        this.attribBits = mesh.attribBits;
+        this.numVertices = mesh.numVertices;
+
+        let attribs = [new VertexAttrib(ATTRIB_POS_LOC, 2, gl.FLOAT)];
+        if (this.hasAttrib(ATTRIB_COLOR)) {
+            attribs.push(new VertexAttrib(ATTRIB_COLOR_LOC, 3, gl.FLOAT));
+        }
+        if (this.hasAttrib(ATTRIB_TEX)) {
+            attribs.push(new VertexAttrib(ATTRIB_TEX_LOC, 2, gl.FLOAT));
+        }
+
+        if (extraAttribs !== null) {
+            for (let extra of extraAttribs) {
+                if extra attribs have data, then it is to be in a seperate vbo (allows divisor > 0)
+                dont push into attribs, handle seperately.
+                attribs.push(extra);
+            }
+        }
 
         this.vao = gl.createVertexArray();
         gl.bindVertexArray(this.vao);
@@ -182,31 +240,23 @@ class Model {
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.data), gl.STATIC_DRAW);
 
         const floatBytes = Float32Array.BYTES_PER_ELEMENT;
-        let elementSize = 2;
-        let colorOffset = 2 * floatBytes;
-        let texOffset = 2 * floatBytes;
-        if ((mesh.attribs & ATTRIB_COLOR) === ATTRIB_COLOR) {
-            elementSize += 3;
-            texOffset += 3 * floatBytes;
-        }
-        if ((mesh.attribs & ATTRIB_TEX) === ATTRIB_TEX) {
-            elementSize += 2;
+        let elementSize = 0;
+        for (let attrib of attribs) {
+            elementSize += attrib.size;
         }
         let stride = elementSize * floatBytes;
-        this.numElements = mesh.data.length / elementSize;
 
-        gl.vertexAttribPointer(ATTRIB_POS_LOC, 2, gl.FLOAT, false, stride, 0);
-        gl.enableVertexAttribArray(ATTRIB_POS_LOC);
-
-        if ((mesh.attribs & ATTRIB_COLOR) === ATTRIB_COLOR) {
-            gl.vertexAttribPointer(ATTRIB_COLOR_LOC, 3, gl.FLOAT, false, stride, colorOffset);
-            gl.enableVertexAttribArray(ATTRIB_COLOR_LOC);
+        let offset = 0;
+        for (let attrib of attribs) {
+            gl.vertexAttribPointer(attrib.loc, attrib.size, attrib.type, false, stride, offset);
+            gl.enableVertexAttribArray(attrib.loc);
+            gl.vertexAttribDivisor(attrib.loc, attrib.divisor);
+            offset += attrib.size * floatBytes;
         }
+    }
 
-        if ((mesh.attribs & ATTRIB_TEX) === ATTRIB_TEX) {
-            gl.vertexAttribPointer(ATTRIB_TEX_LOC, 2, gl.FLOAT, false, stride, texOffset);
-            gl.enableVertexAttribArray(ATTRIB_TEX_LOC);
-        }
+    hasAttrib(attribBit) {
+        return (this.attribBits & attribBit) === attribBit;
     }
 }
 
@@ -257,7 +307,6 @@ const ATTRIB_POS = 1;
 const ATTRIB_COLOR = 2;
 const ATTRIB_TEX = 4;
 
-
 const ATTRIB_POS_LOC = 0;
 const ATTRIB_COLOR_LOC = 1;
 const ATTRIB_TEX_LOC = 2;
@@ -268,8 +317,8 @@ let gl;
 let transformStack = [new Transform()];
 let projMatrix;
 
-let drawParams;
-let currentMesh = null;
+let shapeMesh;
+let texMeshMap = new Map();
 let models = [];
 
 let shapeShader, texShader;
@@ -355,7 +404,7 @@ function _resize(width, height) {
     canvas.height = height;
 
     gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    updateCam();
+    _updateCam();
 }
 
 function resize(width, height) {
@@ -365,7 +414,7 @@ function resize(width, height) {
     _resize(width, height);
 }
 
-function updateCam() {
+function _updateCam() {
     const scaleX = 2 / gl.drawingBufferWidth;
     const scaleY = 2 / gl.drawingBufferHeight;
 
@@ -392,60 +441,24 @@ function getTransform() {
     return transformStack[transformStack.length-1];
 }
 
-function setDrawParams(params) {
-    SIMPLIFY
-    addRect
-    addSphere can be mesh functions
-    list of models that get rendered
-    uniforms get set to shader
-    light fadeoff can be done in color attribute
-
-    drawRect, drawCircle (shapes) can stay as useful debug draw functions
-
-    if (currentMesh !== null) {
-        models.push(new Model(currentMesh, drawParams.drawMode, drawParams.shader, drawParams.textures));
-    }
-    drawParams = params;
-    let attribs = ATTRIB_POS;
-    if (drawParams.textures.length > 0) {
-        attribs |= ATTRIB_TEX;
-    } else {
-        attribs |= ATTRIB_COLOR;
-    }
-    currentMesh = new Mesh(attribs);
+function drawRect(x, y, width, height) {
+    shapeMesh.setTransform(transformStack[transformStack.length-1]);
+    shapeMesh.addRect(x, y, width, height);
 }
 
-function drawRect(x, y, width, height, s0=0, s1=1, t0=0, t1=1) {
+function drawCircle(x, y, radius) {
     shapeMesh.setTransform(transformStack[transformStack.length-1]);
-    mesh.add(x, y, s0, t0);
-    mesh.add(x+width, y, s1, t0);
-    mesh.add(x+width, y+height, s1, t1);
-    mesh.add(x, y, s0, t0);
-    mesh.add(x+width, y+height, s1, t1);
-    mesh.add(x, y+height, s0, t1);
+    shapeMesh.addCircle(x, y, radius);
 }
 
-function drawCircle(x, y, radius, s0=0, s1=1, t0=0, t1=1) {
-    shapeMesh.setTransform(transformStack[transformStack.length-1]);
-    const resolution = 36;
-    const rads = 2 * Math.PI / resolution;
-    for (let i = 0; i < resolution; i++) {
-        let rad0 = i * rads;
-        let rad1 = (i+1) * rads;
-        shapeMesh.add(x, y, 0.5, 0.5);
-        shapeMesh.add(
-            x+radius * Math.cos(rad0),
-            y+radius * Math.sin(rad0),
-            0.5 + Math.cos(rad0),
-            0.5 + Math.sin(rad0),
-        );
-        shapeMesh.add(
-            x+radius * Math.cos(rad1),
-            y+radius * Math.sin(rad1),
-            0.5 + Math.cos(rad1),
-            0.5 + Math.sin(rad1),
-        );
+function drawTexture(x, y, width, height, texture) {
+    let texMesh = texMeshMap.get(texture);
+    if (texMesh === undefined) {
+        texMesh = new Mesh(ATTRIB_POS | ATTRIB_TEX);
+        texMeshMap.set(texture, texMesh);
     }
+    texMesh.setTransform(transformStack[transformStack.length-1]);
+    texMesh.addRect(x, y, width, height);
 }
 
 function drawModel(model) {
@@ -477,10 +490,16 @@ function render(targetTexture=null) {
         _renderModel(model);
     }
     models = [];
+
+    const err = gl.getError();
+    if (err !== gl.NO_ERROR) {
+        console.error("gl error: ", err);
+    }
+
 }
 
 function _renderModel(model) {
-    if (model.numElements === 0) {
+    if (model.numVertices === 0) {
         return;
     }
 
@@ -491,7 +510,8 @@ function _renderModel(model) {
     let uProjMatrixLoc = gl.getUniformLocation(prog, "uProjMatrix");
     gl.uniformMatrix4fv(uProjMatrixLoc, false, projMatrix);
 
-    if ((model.attribs & ATTRIB_TEX) === ATTRIB_TEX) {
+    if (model.hasAttrib(ATTRIB_TEX)) {
+        console.assert(model.textures.length > 0);
         for (let i = 0; i < model.textures.length; i++) {
             let tex = model.textures[i];
             gl.activeTexture(gl.TEXTURE0 + i);
@@ -503,7 +523,7 @@ function _renderModel(model) {
 
     gl.bindVertexArray(model.vao);
 
-    gl.drawArrays(model.drawMode, 0, model.numElements);
+    gl.drawArraysInstanced(model.drawMode, 0, model.numVertices, model.numInstances);
 }
 
 export {
@@ -511,13 +531,13 @@ export {
     Transform,
     Texture,
     Mesh,
+    VertexAttrib,
     Model,
     init,
     resize,
     pushTransform,
     popTransform,
     getTransform,
-    setDrawParams,
     drawRect,
     drawCircle,
     drawTexture,
