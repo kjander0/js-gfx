@@ -109,7 +109,6 @@ class Mesh {
     color;
     transform;
     data;
-    numVertices = 0;
 
     constructor(attribBits) {
         this.attribBits = attribBits;
@@ -134,8 +133,6 @@ class Mesh {
     }
 
     add(x, y, s, t) {
-        this.numVertices++;
-
         [x, y] = this.transform.mulXY(x, y);
         this.data.push(x, y);
         if ((this.attribBits & ATTRIB_COLOR) === ATTRIB_COLOR) {
@@ -187,6 +184,7 @@ class VertexAttrib {
     size;
     type;
     divisor;
+    data = null;
 
     constructor(loc, size, type, divisor=0) {
         this.loc = loc;
@@ -198,7 +196,7 @@ class VertexAttrib {
 
 class Model {
     vao;
-    vbo;
+    vboList = [];
     numVertices;
     attribBits;
     drawMode;
@@ -213,7 +211,6 @@ class Model {
         this.numInstances = numInstances;
 
         this.attribBits = mesh.attribBits;
-        this.numVertices = mesh.numVertices;
 
         let attribs = [new VertexAttrib(ATTRIB_POS_LOC, 2, gl.FLOAT)];
         if (this.hasAttrib(ATTRIB_COLOR)) {
@@ -223,28 +220,42 @@ class Model {
             attribs.push(new VertexAttrib(ATTRIB_TEX_LOC, 2, gl.FLOAT));
         }
 
+        let parallelAttribs = [];
         if (extraAttribs !== null) {
-            for (let extra of extraAttribs) {
-                if extra attribs have data, then it is to be in a seperate vbo (allows divisor > 0)
-                dont push into attribs, handle seperately.
-                attribs.push(extra);
+            for (let attrib of extraAttribs) {
+                if (attrib.data !== null) {
+                    parallelAttribs.push(attrib);
+                } else {
+                    attribs.push(attrib);
+                }
             }
         }
 
         this.vao = gl.createVertexArray();
         gl.bindVertexArray(this.vao);
 
-        this.vbo = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+        for (let attrib of parallelAttribs) {
+            const vbo = gl.createBuffer();
+            this.vboList.push(vbo);
+            gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(attrib.data), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(attrib.loc, attrib.size, attrib.type, false, attrib.size * sizeOf(attrib.type), 0);
+            gl.enableVertexAttribArray(attrib.loc);
+            gl.vertexAttribDivisor(attrib.loc, attrib.divisor);
+        }
 
+        const vbo = gl.createBuffer();
+        this.vboList.push(vbo);
+        gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.data), gl.STATIC_DRAW);
 
-        const floatBytes = Float32Array.BYTES_PER_ELEMENT;
+        const floatBytes = sizeOf(gl.FLOAT);
         let elementSize = 0;
         for (let attrib of attribs) {
             elementSize += attrib.size;
         }
         let stride = elementSize * floatBytes;
+        this.numVertices = mesh.data.length / elementSize;
 
         let offset = 0;
         for (let attrib of attribs) {
@@ -389,6 +400,10 @@ function init(targetCanvas) {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+
     shapeShader = new Shader(shapeVertSrc, shapeFragSrc);
     texShader = new Shader(texVertSrc, texFragSrc);
 
@@ -474,7 +489,7 @@ function render(targetTexture=null) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
-    gl.clearColor(0.0, 0.0, 0.0, 1.0); // Clear to black, fully opaque
+
     gl.clear(gl.COLOR_BUFFER_BIT);
 
 
@@ -491,11 +506,26 @@ function render(targetTexture=null) {
     }
     models = [];
 
-    const err = gl.getError();
-    if (err !== gl.NO_ERROR) {
-        console.error("gl error: ", err);
-    }
+    checkError();
+}
 
+function checkError() {
+    const err = gl.getError();
+    if (err === gl.NO_ERROR) {
+        return;
+    } else if (err === gl.INVALID_ENUM) {
+        throw "gl error: invalid enum";
+    } else if (err === gl.INVALID_VALUE) {
+        throw "gl error: invalid value";
+    } else if (err === gl.INVALID_OPERATION) {
+        throw "gl error: invalid operation";
+    } else if (err === gl.INVALID_FRAMEBUFFER_OPERATION) {
+        throw "gl error: invalid framebuffer operation";
+    } else if (err === gl.OUT_OF_MEMORY) {
+        throw "gl error: out of memory";
+    } else if (err === gl.CONTEXT_LOST_WEBGL) {
+        throw "gl error: context lost";
+    }
 }
 
 function _renderModel(model) {
@@ -524,6 +554,13 @@ function _renderModel(model) {
     gl.bindVertexArray(model.vao);
 
     gl.drawArraysInstanced(model.drawMode, 0, model.numVertices, model.numInstances);
+}
+
+function sizeOf(glType) {
+    if (glType === gl.FLOAT) {
+        return Float32Array.BYTES_PER_ELEMENT;
+    }
+    throw "length of type not specified";
 }
 
 export {
