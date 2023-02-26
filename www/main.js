@@ -17,16 +17,16 @@ out vec2 vLightPos;
 out vec2 vPos;
 
 uniform mat4 uProjMatrix;
+uniform mat3 uCamMatrix;
 uniform vec2 uScreenSize;
 //uniform float uRadius;
 
 void main() {
     vLightPos = aLightPos;
     vPos = aVertexPosition + aLightPos;
-    vec4 pos = vec4(vPos, 0, 1);
-    screenPos? (camera and proj matrix!)
-    vTexCoord = screenPos / screenSize;
-    gl_Position = uProjMatrix * pos;
+    vec2 screenPos = (uCamMatrix * vec3(vPos, 1)).xy;
+    vTexCoord = screenPos / 2000.0;
+    gl_Position = uProjMatrix * vec4(screenPos, 0, 1);
 }`;
 
 const lightsFragSrc = `#version 300 es
@@ -51,7 +51,8 @@ void main() {
 
     // TODO add light falloff (radius as uniform)
     vec3 color = dot(normal, -lightDir) * vec3(1.f, 0.f, 0.f);;
-    fragColor = vec4(vTexCoord, 0, alpha);
+    fragColor = texture(uTex0, vTexCoord);
+    //fragColor = vec4(vTexCoord, 0, alpha);
 }`;
 
 const spriteVertSrc = `#version 300 es
@@ -59,12 +60,13 @@ layout (location=0) in vec2 aVertexPosition;
 layout (location=2) in vec2 aTexCoord;
 
 out vec2 vTexCoord;
+uniform mat3 uCamMatrix;
 uniform mat4 uProjMatrix;
 
 void main() {
     vTexCoord = aTexCoord;
-    vec4 pos = vec4(aVertexPosition, 0, 1);
-    gl_Position = uProjMatrix * pos;
+    vec2 screenPos = (uCamMatrix * vec3(aVertexPosition, 1)).xy;
+    gl_Position = uProjMatrix * vec4(screenPos, 0, 1);
 }`;
 
 const spriteFragSrc = `#version 300 es
@@ -81,7 +83,7 @@ void main() {
 }`;
 
 function onresize () {
-    // TODO: originate resize event from gfx
+    // TODO: originate resize event from gfx (monitoring canvas resize)
     gfx.resize(canvas.clientWidth, canvas.clientHeight);
 }
 
@@ -112,9 +114,7 @@ window.onload = function () {
     function render() {       
         let camX = 0;
         let camY = 0;
-        let camTransform = gfx.Transform.translation(gfx.gl.drawingBufferWidth/2 - camX, gfx.gl.drawingBufferHeight/2 -camY);
-
-        gfx.pushTransform(camTransform);
+        gfx.setCamera(camX, camY); // TODO: this function should inverse to get the camera transform
         
         // TODO: draw normal/albedo offscreen textures with the same shader!!!
 
@@ -128,13 +128,7 @@ window.onload = function () {
         gfx.gl.clearColor(0, 0, 0, 1.0);
         gfx.render(albedoTex);
 
-        let lights = [[60, 60]];
-        let posData = [];
-        for (let l of lights) {
-            const [lightX, lightY] = gfx.getTransform().mulXY(l[0], l[1]);
-            posData.push(lightX, lightY);
-        }
-
+        let posData = [60, 60];
         let lightsMesh = new gfx.Mesh(gfx.ATTRIB_POS);
         const lightRadius = 150;
         // const s0 = (lightX - lightRadius) / gfx.gl.drawingBufferWidth;
@@ -146,7 +140,7 @@ window.onload = function () {
         let lightPosAttrib = new gfx.VertexAttrib(ATTRIB_LIGHT_POS_LOC, 2, gfx.gl.FLOAT, 1);
         lightPosAttrib.data = posData;
 
-        lightsShader.setUniform("uScreenSize", [gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight]);
+        //lightsShader.setUniform("uScreenSize", [gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight]);
         //lightsShader.setUniform("uRadius", lightRadius);
 
         let lightsModel = new gfx.Model(
@@ -155,14 +149,13 @@ window.onload = function () {
             lightsShader,
             [normalTex],
             [lightPosAttrib],
-            lights.length
+            1,
         );
 
         gfx.drawModel(lightsModel);
         gfx.render(highlightTex);
-
-        gfx.popTransform();
-
+        
+        gfx.setCamera(gfx.gl.drawingBufferWidth/2.0, gfx.gl.drawingBufferHeight/2.0);
         gfx.drawTexture(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight, highlightTex);
 
         // let shipMesh = new gfx.Mesh(gfx.ATTRIB_POS | gfx.ATTRIB_TEX);

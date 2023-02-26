@@ -355,6 +355,10 @@ let canvas;
 let gl;
 
 let transformStack = [new Transform()];
+
+let camX = 0
+let camY = 0;
+let camTransform = new Transform();
 let projMatrix;
 
 let shapeMesh;
@@ -370,11 +374,12 @@ layout (location=0) in vec2 aVertexPosition;
 layout (location=1) in vec3 aColor;
 
 out vec4 vColor;
+uniform mat3 uCamMatrix;
 uniform mat4 uProjMatrix;
 void main() {
     vColor = vec4(aColor, 1);
-    vec4 pos = vec4(aVertexPosition, 0, 1);
-    gl_Position = uProjMatrix * pos;
+    vec2 screenPos = (uCamMatrix * vec3(aVertexPosition, 1)).xy;
+    gl_Position = uProjMatrix * vec4(screenPos, 0, 1);
 }`;
 
 const shapeFragSrc = `#version 300 es
@@ -390,12 +395,13 @@ layout (location=0) in vec2 aVertexPosition;
 layout (location=2) in vec2 aTexCoord;
 
 out vec2 vTexCoord;
+uniform mat3 uCamMatrix;
 uniform mat4 uProjMatrix;
 
 void main() {
     vTexCoord = aTexCoord;
-    vec4 pos = vec4(aVertexPosition, 0, 1);
-    gl_Position = uProjMatrix * pos;
+    vec2 screenPos = (uCamMatrix * vec3(aVertexPosition, 1)).xy;
+    gl_Position = uProjMatrix * vec4(screenPos, 0, 1);
 }`;
 
 const texFragSrc = `#version 300 es
@@ -448,17 +454,7 @@ function _resize(width, height) {
     canvas.height = height;
 
     gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    _updateCam();
-}
 
-function resize(width, height) {
-    if (canvas.width === width && canvas.height === height) {
-      return;
-    }
-    _resize(width, height);
-}
-
-function _updateCam() {
     const scaleX = 2 / gl.drawingBufferWidth;
     const scaleY = 2 / gl.drawingBufferHeight;
 
@@ -468,6 +464,22 @@ function _updateCam() {
         0, 0, -1, 0,
         -1, -1, 0, 1,
       ];
+    
+    setCamera(camX, camY);
+}
+
+function resize(width, height) {
+    if (canvas.width === width && canvas.height === height) {
+      return;
+    }
+    _resize(width, height);
+}
+
+// TODO: pass in transform matrix of camera, then we do affine inverse here.
+function setCamera(x, y) {
+    camX = x;
+    camY = y;
+    camTransform = Transform.translation(gl.drawingBufferWidth/2.0 - camX, gl.drawingBufferHeight/2.0 - camY);
 }
 
 function pushTransform(t) {
@@ -565,9 +577,12 @@ function _renderModel(model) {
     let prog = model.shader.prog;
     gl.useProgram(prog);
 
-
+    // TODO: set uniforms via shader methods!
     let uProjMatrixLoc = gl.getUniformLocation(prog, "uProjMatrix");
     gl.uniformMatrix4fv(uProjMatrixLoc, false, projMatrix);
+
+    let uCamMatrixLoc = gl.getUniformLocation(prog, "uCamMatrix");
+    gl.uniformMatrix3fv(uCamMatrixLoc, false, camTransform.mat);
 
     if (model.hasAttrib(ATTRIB_TEX)) {
         console.assert(model.textures.length > 0);
@@ -601,6 +616,7 @@ export {
     Model,
     init,
     resize,
+    setCamera,
     pushTransform,
     popTransform,
     getTransform,
