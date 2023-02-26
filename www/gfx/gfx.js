@@ -80,6 +80,7 @@ class Texture {
 
 class Shader {
     prog;
+    uniformLocations = {};
 
     constructor(vertSrc, fragSrc) {
         const vertShader = gl.createShader(gl.VERTEX_SHADER);
@@ -101,6 +102,34 @@ class Shader {
             console.error(`fs info-log: ${gl.getShaderInfoLog(fragShader)}`);
             // TODO: delete shaders
         }
+    }
+
+    setUniform(name, value) {
+        gl.useProgram(this.prog);
+        let loc = this.uniformLocations[name];
+        if (loc === undefined) {
+            loc = gl.getUniformLocation(this.prog, name);
+            if (loc === null) {
+                throw "could not find uniform: " + name;
+            }
+            this.uniformLocations[name] = loc;
+        }
+        if (value instanceof Array) {
+            let len = value.length;
+            if (len == 2) {
+                gl.uniform2fv(loc, value);
+            } else if (len == 3) {
+                gl.uniform3fv(loc, value);
+            } else {
+                throw "unsupported vector uniform length";
+            }
+            return;
+        }
+
+        if (isNaN(value)) {
+            throw "uniform type not supported";
+        }
+        gl.uniform1f(loc, value);
     }
 };
 
