@@ -16,7 +16,7 @@ class Texture {
         tex.height = height;
         tex.glTexture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, tex.glTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, tex.width, tex.height, 0, gl.RGB, gl.UNSIGNED_BYTE, null);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tex.width, tex.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -75,6 +75,10 @@ class Texture {
         image.src = url;
         
         return tex;
+    }
+
+    dispose() {
+        gl.deleteTexture(this.glTexture);
     }
 }
 
@@ -354,6 +358,8 @@ const ATTRIB_TEX_LOC = 2;
 let canvas;
 let gl;
 
+let resizeCb = function() {};
+
 let transformStack = [new Transform()];
 
 let camX = 0
@@ -444,14 +450,20 @@ function init(targetCanvas) {
 
     shapeMesh = new Mesh(ATTRIB_POS | ATTRIB_COLOR);
 
-    _resize(canvas.clientWidth, canvas.clientHeight); // initial resize
+    const resizeObserver = new ResizeObserver(() => {
+        _onresize();
+    });
+    resizeObserver.observe(canvas);
+
+    _onresize(); // initial resize
 
     fbo = gl.createFramebuffer();
 }
 
-function _resize(width, height) {
-    canvas.width = width;
-    canvas.height = height;
+function _onresize() {
+    // TODO: throttle resize with timer!!!
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
 
     gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
 
@@ -466,13 +478,12 @@ function _resize(width, height) {
       ];
     
     setCamera(camX, camY);
+
+    resizeCb(gl.drawingBufferWidth, gl.drawingBufferHeight);
 }
 
-function resize(width, height) {
-    if (canvas.width === width && canvas.height === height) {
-      return;
-    }
-    _resize(width, height);
+function setResizeCb(cb) {
+    resizeCb = cb;
 }
 
 // TODO: pass in transform matrix of camera, then we do affine inverse here.
@@ -584,15 +595,16 @@ function _renderModel(model) {
     let uCamMatrixLoc = gl.getUniformLocation(prog, "uCamMatrix");
     gl.uniformMatrix3fv(uCamMatrixLoc, false, camTransform.mat);
 
-    if (model.hasAttrib(ATTRIB_TEX)) {
-        console.assert(model.textures.length > 0);
-        for (let i = 0; i < model.textures.length; i++) {
-            let tex = model.textures[i];
-            gl.activeTexture(gl.TEXTURE0 + i);
-            gl.bindTexture(gl.TEXTURE_2D, tex.glTexture);
-            let uTexLoc = gl.getUniformLocation(prog, "uTex"+i);
-            gl.uniform1i(uTexLoc, i);
-        }
+    if (model.hasAttrib(ATTRIB_TEX) && model.textures.length ===0) {
+        throw "missing textures for model with tex coord attribs";
+    }
+
+    for (let i = 0; i < model.textures.length; i++) {
+        let tex = model.textures[i];
+        gl.activeTexture(gl.TEXTURE0 + i);
+        gl.bindTexture(gl.TEXTURE_2D, tex.glTexture);
+        let uTexLoc = gl.getUniformLocation(prog, "uTex"+i);
+        gl.uniform1i(uTexLoc, i);
     }
 
     gl.bindVertexArray(model.vao);
@@ -615,7 +627,7 @@ export {
     VertexAttrib,
     Model,
     init,
-    resize,
+    setResizeCb,
     setCamera,
     pushTransform,
     popTransform,
