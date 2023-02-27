@@ -42,7 +42,6 @@ in vec2 vPos;
 out vec4 fragColor;
 
 void main() {
-    //NORMAL SAMPLES HAVE VARYING ALPHA NOW!
     vec4 normalSample = texture(uTex0, vTexCoord);
     vec3 normal = normalize(2.f * normalSample.rgb - vec3(1.f));
 
@@ -53,10 +52,11 @@ void main() {
     //float quadFalloff = max(1.f - dist * dist / (uRadius * uRadius), 0.f);
     float falloff = max(1.f - dist/uRadius, 0.f);
 
-    // TODO add light falloff (radius as uniform)
     vec3 color = falloff * dot(normal, -lightDir) * vec3(1.f, 0.1f, 0.1f);
     fragColor = vec4(color, normalSample.a);
     //fragColor = falloff * vec4(1.f, 0.f, 0.f, 1.f);
+
+    TODO: gamma correct all shaders, and use SRGB textures
 }`;
 
 const spriteVertSrc = `#version 300 es
