@@ -647,6 +647,8 @@ export {
     drawModel,
     render,
     gl,
+    texVertSrc,
+    texFragSrc,
     ATTRIB_POS,
     ATTRIB_COLOR,
     ATTRIB_TEX,

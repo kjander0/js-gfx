@@ -1,8 +1,8 @@
 import * as gfx from "./gfx/gfx.js"
 // TODO
+// - tone mapping (may require greater bit depth for intermediate textures!!!)
 // - consider enabling depth buffer and use z to order 2d sprites
 // - check mozilla webgl best practices
-// - gamma correction, but not for normal tetures, check light falloff for gamma correction!
 // - avoid calling useProgram if shader already bound
 const canvas = document.getElementById("glcanvas");
 
@@ -49,17 +49,12 @@ void main() {
     float dist = length(lightDir);
     lightDir = normalize(lightDir);
 
-    ADD PROPER FALLOFF FUNCTION!
-    //float falloff = max(1.f - dist * dist / (uRadius * uRadius), 0.f);
-    //float falloff = max(1.f - dist/uRadius, 0.f);
-    float falloff = 1.f / (0.1f + 0.01f * dist * dist) + 0.00001 * uRadius;
+    float attenPower = 3.0;
+    float atten = max(abs(pow(-dist/uRadius + 1.0, attenPower)), 0.f);
 
-    vec3 color = falloff * dot(normal, -lightDir) * vec3(1.0, .2, .2);
+    vec3 color = atten * dot(normal, -lightDir) * vec3(1., .01, .01);
     fragColor = vec4(color, normalSample.a);
-    fragColor = falloff * vec4(1.f, 0.f, 0.f, 1.f);
-
-    // TODO: remove this gamma correction (here for testing)
-    fragColor.rgb = pow(fragColor.rgb, vec3(1.0/2.2));
+    //fragColor = atten * vec4(1.f, 0.f, 0.f, 1.f);
 }`;
 
 const spriteVertSrc = `#version 300 es
@@ -86,14 +81,29 @@ in vec2 vTexCoord;
 out vec4 fragColor;
 
 void main() {
-    // TODO tone mapping
     fragColor = texture(uTex0, vTexCoord) + texture(uTex1, vTexCoord);
-    
+    float power = 0.7;
+    float coef = 1.0 / pow(2.0, power);
+    FIX THIS TONE MAPPING (should be mostly linear from 0-1)
+    fragColor.rgb = coef * pow(fragColor.rgb, vec3(power));
+}`;
+
+const finalFragSrc = `#version 300 es
+precision mediump float;
+
+uniform sampler2D uTex0;
+
+in vec2 vTexCoord;
+out vec4 fragColor;
+
+void main() {
+    // TODO: if we want to tone map here, then need to use float32 color channels for intermediate stages
+    fragColor = texture(uTex0, vTexCoord);
     // gamma correction
     fragColor.rgb = pow(fragColor.rgb, vec3(1.0/2.2));
 }`;
 
-let albedoTex = null, normalTex = null, highlightTex = null;
+let albedoTex = null, normalTex = null, highlightTex = null, finalTex = null;
 
 function onresize (bufWidth, bufHeight) {
     if (albedoTex !== null) {
@@ -102,7 +112,7 @@ function onresize (bufWidth, bufHeight) {
         highlightTex.dispose();
     }
 
-    // TODO: consider using smaller offscreen textures (requires adjusting glViewPort())
+    // TODO: consider using smaller offscreen textures for some of these (requires adjusting glViewPort())
     albedoTex = gfx.Texture.fromSize(
         bufWidth,
         bufHeight
@@ -115,6 +125,10 @@ function onresize (bufWidth, bufHeight) {
         bufWidth,
         bufHeight,
     );
+    finalTex = gfx.Texture.fromSize (
+        bufWidth,
+        bufHeight,
+    );
 }
 
 window.onload = function () {
@@ -123,9 +137,10 @@ window.onload = function () {
 
     const lightsShader = new gfx.Shader(lightsVertSrc, lightsFragSrc);
     const spriteShader = new gfx.Shader(spriteVertSrc, spriteFragSrc);
+    const finalShader = new gfx.Shader(gfx.texVertSrc, finalFragSrc);
 
     let shipAlbedoTex = gfx.Texture.fromUrl("assets/ship.png", true);
-    let shipNormalTex = gfx.Texture.fromUrl("assets/ship_normal.png", true);
+    let shipNormalTex = gfx.Texture.fromUrl("assets/ship_normal.png", false);
 
     const positions = [];
     for (let i = 0; i < 200; i++) {
@@ -155,7 +170,7 @@ window.onload = function () {
 
         let posData = [130, 130, -90, -40, -100, 90, -500, -300, 500, -10, -550, 74];
         let lightsMesh = new gfx.Mesh(gfx.ATTRIB_POS);
-        const lightRadius = 300;
+        const lightRadius = 150;
         lightsMesh.addCircle(0, 0, lightRadius);
 
         let lightPosAttrib = new gfx.VertexAttrib(ATTRIB_LIGHT_POS_LOC, 2, gfx.gl.FLOAT, 1);
@@ -178,20 +193,29 @@ window.onload = function () {
         gfx.gl.blendFunc(gfx.gl.SRC_ALPHA, gfx.gl.ONE_MINUS_SRC_ALPHA);
         
         gfx.setCamera(gfx.gl.drawingBufferWidth/2.0, gfx.gl.drawingBufferHeight/2.0);
-        gfx.drawTexture(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight, highlightTex);
+        //gfx.drawTexture(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight, albedoTex);
 
-        // let shipMesh = new gfx.Mesh(gfx.ATTRIB_POS | gfx.ATTRIB_TEX);
-        // shipMesh.addRect(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight);
-        // let shipModel = new gfx.Model(
-        //     shipMesh,
-        //     gfx.gl.TRIANGLES,
-        //     spriteShader,
-        //     [albedoTex, highlightTex]
-        // );
-        // gfx.drawModel(shipModel);
-        
+        let shipMesh = new gfx.Mesh(gfx.ATTRIB_POS | gfx.ATTRIB_TEX);
+        shipMesh.addRect(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight);
+        let shipModel = new gfx.Model(
+            shipMesh,
+            gfx.gl.TRIANGLES,
+            spriteShader,
+            [albedoTex, highlightTex]
+        );
+        gfx.drawModel(shipModel);
+        gfx.render(finalTex);
+
+        let screenMesh = new gfx.Mesh(gfx.ATTRIB_POS | gfx.ATTRIB_TEX);
+        screenMesh.addRect(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight);
+        let screenModel = new gfx.Model(
+            screenMesh,
+            gfx.gl.TRIANGLES,
+            finalShader,
+            [finalTex]
+        );
+        gfx.drawModel(screenModel);
         gfx.render();
-
 
         window.requestAnimationFrame(render);
     };
