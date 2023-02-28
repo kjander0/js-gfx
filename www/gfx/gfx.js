@@ -10,13 +10,18 @@ class Texture {
     width;
     height;
 
-    static fromSize(width, height) {
+    static fromSize(width, height, srgb=false) {
         let tex = new Texture();
         tex.width = width;
         tex.height = height;
         tex.glTexture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, tex.glTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tex.width, tex.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        let internalFormat = gl.RGBA;
+        if (srgb) {
+            internalFormat = gl.SRGB8_ALPHA8;
+        }
+        // TODO: use gl.SRGB8_ALPHA8 or something here for albedo textures, not for normals!
+        gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, tex.width, tex.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -24,7 +29,7 @@ class Texture {
         return tex;
     }
 
-    static fromUrl(url) {
+    static fromUrl(url, srgb=false) {
         let tex = new Texture();
         tex.glTexture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, tex.glTexture);
@@ -32,9 +37,13 @@ class Texture {
         tex.width = 1;
         tex.height = 1;
     
+        // TODO: use gl.SRGB8_ALPHA8 or something here for albedo textures, not for normals!
         // TODO: best to preload textures (currently storing 1 blue pixel in texure while it downloads)
         const level = 0;
-        const internalFormat = gl.RGBA;
+        let internalFormat = gl.RGBA;
+        if (srgb) {
+            internalFormat = gl.SRGB8_ALPHA8;
+        }
         const border = 0;
         const srcFormat = gl.RGBA;
         const srcType = gl.UNSIGNED_BYTE;

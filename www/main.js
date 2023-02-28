@@ -49,14 +49,17 @@ void main() {
     float dist = length(lightDir);
     lightDir = normalize(lightDir);
 
-    //float quadFalloff = max(1.f - dist * dist / (uRadius * uRadius), 0.f);
-    float falloff = max(1.f - dist/uRadius, 0.f);
+    ADD PROPER FALLOFF FUNCTION!
+    //float falloff = max(1.f - dist * dist / (uRadius * uRadius), 0.f);
+    //float falloff = max(1.f - dist/uRadius, 0.f);
+    float falloff = 1.f / (0.1f + 0.01f * dist * dist) + 0.00001 * uRadius;
 
-    vec3 color = falloff * dot(normal, -lightDir) * vec3(1.f, 0.1f, 0.1f);
+    vec3 color = falloff * dot(normal, -lightDir) * vec3(1.0, .2, .2);
     fragColor = vec4(color, normalSample.a);
-    //fragColor = falloff * vec4(1.f, 0.f, 0.f, 1.f);
+    fragColor = falloff * vec4(1.f, 0.f, 0.f, 1.f);
 
-    TODO: gamma correct all shaders, and use SRGB textures
+    // TODO: remove this gamma correction (here for testing)
+    fragColor.rgb = pow(fragColor.rgb, vec3(1.0/2.2));
 }`;
 
 const spriteVertSrc = `#version 300 es
@@ -85,6 +88,9 @@ out vec4 fragColor;
 void main() {
     // TODO tone mapping
     fragColor = texture(uTex0, vTexCoord) + texture(uTex1, vTexCoord);
+    
+    // gamma correction
+    fragColor.rgb = pow(fragColor.rgb, vec3(1.0/2.2));
 }`;
 
 let albedoTex = null, normalTex = null, highlightTex = null;
@@ -103,11 +109,11 @@ function onresize (bufWidth, bufHeight) {
     );
     normalTex = gfx.Texture.fromSize(
         bufWidth,
-        bufHeight
+        bufHeight,
     );
     highlightTex = gfx.Texture.fromSize(
         bufWidth,
-        bufHeight
+        bufHeight,
     );
 }
 
@@ -118,8 +124,8 @@ window.onload = function () {
     const lightsShader = new gfx.Shader(lightsVertSrc, lightsFragSrc);
     const spriteShader = new gfx.Shader(spriteVertSrc, spriteFragSrc);
 
-    let shipAlbedoTex = gfx.Texture.fromUrl("assets/ship.png");
-    let shipNormalTex = gfx.Texture.fromUrl("assets/ship_normal.png");
+    let shipAlbedoTex = gfx.Texture.fromUrl("assets/ship.png", true);
+    let shipNormalTex = gfx.Texture.fromUrl("assets/ship_normal.png", true);
 
     const positions = [];
     for (let i = 0; i < 200; i++) {
@@ -149,7 +155,7 @@ window.onload = function () {
 
         let posData = [130, 130, -90, -40, -100, 90, -500, -300, 500, -10, -550, 74];
         let lightsMesh = new gfx.Mesh(gfx.ATTRIB_POS);
-        const lightRadius = 150;
+        const lightRadius = 300;
         lightsMesh.addCircle(0, 0, lightRadius);
 
         let lightPosAttrib = new gfx.VertexAttrib(ATTRIB_LIGHT_POS_LOC, 2, gfx.gl.FLOAT, 1);
@@ -172,17 +178,17 @@ window.onload = function () {
         gfx.gl.blendFunc(gfx.gl.SRC_ALPHA, gfx.gl.ONE_MINUS_SRC_ALPHA);
         
         gfx.setCamera(gfx.gl.drawingBufferWidth/2.0, gfx.gl.drawingBufferHeight/2.0);
-        //gfx.drawTexture(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight, highlightTex);
+        gfx.drawTexture(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight, highlightTex);
 
-        let shipMesh = new gfx.Mesh(gfx.ATTRIB_POS | gfx.ATTRIB_TEX);
-        shipMesh.addRect(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight);
-        let shipModel = new gfx.Model(
-            shipMesh,
-            gfx.gl.TRIANGLES,
-            spriteShader,
-            [albedoTex, highlightTex]
-        );
-        gfx.drawModel(shipModel);
+        // let shipMesh = new gfx.Mesh(gfx.ATTRIB_POS | gfx.ATTRIB_TEX);
+        // shipMesh.addRect(0, 0, gfx.gl.drawingBufferWidth, gfx.gl.drawingBufferHeight);
+        // let shipModel = new gfx.Model(
+        //     shipMesh,
+        //     gfx.gl.TRIANGLES,
+        //     spriteShader,
+        //     [albedoTex, highlightTex]
+        // );
+        // gfx.drawModel(shipModel);
         
         gfx.render();
 
