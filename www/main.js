@@ -82,10 +82,7 @@ out vec4 fragColor;
 
 void main() {
     fragColor = texture(uTex0, vTexCoord) + texture(uTex1, vTexCoord);
-    float power = 0.7;
-    float coef = 1.0 / pow(2.0, power);
-    FIX THIS TONE MAPPING (should be mostly linear from 0-1)
-    fragColor.rgb = coef * pow(fragColor.rgb, vec3(power));
+    fragColor.rgb -= 0.25 * pow(fragColor.rgb, vec3(2.0));
 }`;
 
 const finalFragSrc = `#version 300 es
@@ -97,7 +94,6 @@ in vec2 vTexCoord;
 out vec4 fragColor;
 
 void main() {
-    // TODO: if we want to tone map here, then need to use float32 color channels for intermediate stages
     fragColor = texture(uTex0, vTexCoord);
     // gamma correction
     fragColor.rgb = pow(fragColor.rgb, vec3(1.0/2.2));
