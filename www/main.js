@@ -1,6 +1,5 @@
 import * as gfx from "./gfx/gfx.js"
 // TODO
-// - tone mapping (may require greater bit depth for intermediate textures!!!)
 // - consider enabling depth buffer and use z to order 2d sprites
 // - check mozilla webgl best practices
 // - avoid calling useProgram if shader already bound

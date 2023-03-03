@@ -1,5 +1,3 @@
-// TODO: delete vbo, vao, texture, framebuffer, renderbuffer after use
-
 class Texture {
     glTexture;
     s0 = 0;
@@ -20,7 +18,6 @@ class Texture {
         if (srgb) {
             internalFormat = gl.SRGB8_ALPHA8;
         }
-        // TODO: use gl.SRGB8_ALPHA8 or something here for albedo textures, not for normals!
         gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, tex.width, tex.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -37,8 +34,6 @@ class Texture {
         tex.width = 1;
         tex.height = 1;
     
-        // TODO: use gl.SRGB8_ALPHA8 or something here for albedo textures, not for normals!
-        // TODO: best to preload textures (currently storing 1 blue pixel in texure while it downloads)
         const level = 0;
         let internalFormat = gl.RGBA;
         if (srgb) {
@@ -92,6 +87,8 @@ class Texture {
 }
 
 class Shader {
+    static currentProg = null;
+
     prog;
     uniformLocations = {};
 
@@ -110,15 +107,14 @@ class Shader {
         gl.linkProgram(this.prog);
 
         if (!gl.getProgramParameter(this.prog, gl.LINK_STATUS)) {
-            console.error(`Link failed: ${gl.getProgramInfoLog(this.prog)}`);
+            console.error(`link failed: ${gl.getProgramInfoLog(this.prog)}`);
             console.error(`vs info-log: ${gl.getShaderInfoLog(vertShader)}`);
             console.error(`fs info-log: ${gl.getShaderInfoLog(fragShader)}`);
-            // TODO: delete shaders
+            throw "program could not be compiled";
         }
     }
 
-    setUniform(name, value) {
-        gl.useProgram(this.prog);
+    getUniformLoc(name) {
         let loc = this.uniformLocations[name];
         if (loc === undefined) {
             loc = gl.getUniformLocation(this.prog, name);
@@ -127,12 +123,24 @@ class Shader {
             }
             this.uniformLocations[name] = loc;
         }
-        if (value instanceof Array) {
+        return loc;
+    }
+
+    setUniform(name, value) {
+        this.use();
+
+        let loc = this.getUniformLoc(name);
+
+        if (value instanceof Array || value instanceof Float32Array) {
             let len = value.length;
-            if (len == 2) {
+            if (len === 2) {
                 gl.uniform2fv(loc, value);
-            } else if (len == 3) {
+            } else if (len === 3) {
                 gl.uniform3fv(loc, value);
+            } else if (len === 16) {
+                gl.uniformMatrix4fv(loc, false, value);
+            } else if (len === 9) {
+                gl.uniformMatrix3fv(loc, false, value);
             } else {
                 throw "unsupported vector uniform length";
             }
@@ -143,6 +151,30 @@ class Shader {
             throw "uniform type not supported";
         }
         gl.uniform1f(loc, value);
+    }
+
+    setUniformi(name, value) {
+        let loc = this.getUniformLoc(name);
+
+        if (!Number.isInteger(value)) {
+            throw "expected integer for uniform: " + name;
+        }
+        gl.uniform1i(loc, value);
+    }
+
+    use() {
+        if (Shader.currentProg === this.prog) {
+            return;
+        }
+        Shader.currentProg = this.prog;
+        gl.useProgram(this.prog);
+    }
+
+    dispose() {
+        if (Shader.currentProg === this.prog) {
+            Shader.currentProg = null;
+        }
+        gl.deleteProgram(this.prog);
     }
 };
 
@@ -311,6 +343,13 @@ class Model {
     hasAttrib(attribBit) {
         return (this.attribBits & attribBit) === attribBit;
     }
+
+    dispose() {
+        for (let vbo of this.vboList) {
+            gl.deleteBuffer(vbo);
+        }
+        gl.deleteVertexArray(this.vao);
+    }
 }
 
 class Transform {
@@ -444,7 +483,6 @@ function init(targetCanvas) {
         throw "could not get webgl2 context";
     }
 
-    // TODO: do not get context with depth buffer if we don't need it
     gl.disable(gl.DEPTH_TEST);
 
     gl.enable(gl.BLEND);
@@ -550,15 +588,19 @@ function render(targetTexture=null) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
-
     gl.clear(gl.COLOR_BUFFER_BIT);
 
+    const disposeModels = [];
 
-    models.push(new Model(shapeMesh, gl.TRIANGLES, shapeShader));
+    const shapeModel = new Model(shapeMesh, gl.TRIANGLES, shapeShader)
+    models.push(shapeModel);
+    disposeModels.push(shapeModel);
     shapeMesh.clear();
 
     texMeshMap.forEach((mesh, texture) => {
-        models.push(new Model(mesh, gl.TRIANGLES, texShader, [texture]));
+        const texModel = new Model(mesh, gl.TRIANGLES, texShader, [texture]);
+        models.push(texModel);
+        disposeModels.push(texModel);
         mesh.clear();
     });
 
@@ -566,6 +608,11 @@ function render(targetTexture=null) {
         _renderModel(model);
     }
     models = [];
+    
+    // TODO: reuse vao/vbo instead of disposing every frame
+    for (let model of disposeModels) {
+        model.dispose();
+    }
 
     checkError();
 }
@@ -594,15 +641,10 @@ function _renderModel(model) {
         return;
     }
 
-    let prog = model.shader.prog;
-    gl.useProgram(prog);
+    model.shader.use();
 
-    // TODO: set uniforms via shader methods!
-    let uProjMatrixLoc = gl.getUniformLocation(prog, "uProjMatrix");
-    gl.uniformMatrix4fv(uProjMatrixLoc, false, projMatrix);
-
-    let uCamMatrixLoc = gl.getUniformLocation(prog, "uCamMatrix");
-    gl.uniformMatrix3fv(uCamMatrixLoc, false, camTransform.mat);
+    model.shader.setUniform("uProjMatrix", projMatrix);
+    model.shader.setUniform("uCamMatrix", camTransform.mat);
 
     if (model.hasAttrib(ATTRIB_TEX) && model.textures.length ===0) {
         throw "missing textures for model with tex coord attribs";
@@ -612,8 +654,7 @@ function _renderModel(model) {
         let tex = model.textures[i];
         gl.activeTexture(gl.TEXTURE0 + i);
         gl.bindTexture(gl.TEXTURE_2D, tex.glTexture);
-        let uTexLoc = gl.getUniformLocation(prog, "uTex"+i);
-        gl.uniform1i(uTexLoc, i);
+        model.shader.setUniformi("uTex"+i, i);
     }
 
     gl.bindVertexArray(model.vao);
